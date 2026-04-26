@@ -80,11 +80,38 @@ const userMe = async (req, res) => {
   });
 };
 
-module.exports = { userRegister, userLogin, userMe };
+const checkAuth = async (req, res) => {
+  // If auth middleware set req.user, return authenticated status and basic user info
+  if (!req.user) return res.status(200).json({ authenticated: false });
 
-const userLogout = async (req, res) => {
-  res.clearCookie("token");
-  return res.status(200).json({ message: "Logged out" });
+  const user = req.user;
+  return res.status(200).json({
+    authenticated: true,
+    user: {
+      email: user.email,
+      fullName: user.fullName,
+      _id: user._id,
+    },
+  });
 };
 
-module.exports.userLogout = userLogout;
+// const userLogout = async (req, res) => {
+//   res.clearCookie("token");
+//   return res.status(200).json({ message: "Logged out" });
+// };
+
+const userLogout = async (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: false, // true in production (HTTPS)
+    sameSite: "lax",
+    path: "/", // VERY IMPORTANT
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: "Logged out",
+  });
+};
+
+module.exports = { userRegister, userLogin, userMe, userLogout, checkAuth };

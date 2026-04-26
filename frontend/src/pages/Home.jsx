@@ -1,611 +1,298 @@
-import { useState, useRef, useEffect } from "react";
-import MobileHeader from "../components/MobileHeader";
-import Sidebar from "../components/Sidebar";
-import ChatWindow from "../components/ChatWindow";
-import MessageInput from "../components/MessageInput";
-import { MessageSquare, Plus } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Outlet } from "react-router-dom";
+import { BaseUrl } from "../config";
 import axios from "axios";
-import { io as ioClient } from "socket.io-client";
-import { useNavigate } from "react-router-dom";
-import { toast } from "react-toastify";
 
-const Home = () => {
-  const navigate = useNavigate();
-  const [chats, setChats] = useState([]);
-  const safeGetLocal = (k) => {
-    try {
-      return localStorage.getItem(k);
-    } catch {
-      return null;
-    }
-  };
-  const safeSetLocal = (k, v) => {
-    try {
-      localStorage.setItem(k, v);
-    } catch {
-      /* ignore */
-    }
-  };
+const stats = [
+  { value: "10M+", label: "Conversations" },
+  { value: "500K+", label: "Users" },
+  { value: "99.9%", label: "Uptime" },
+  { value: "150+", label: "Integrations" },
+];
 
-  const [activeChatId, setActiveChatId] = useState(() => {
-    const val = safeGetLocal("activeChatId");
-    return val ? val : null;
-  });
-  const [inputMessage, setInputMessage] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [editingChatId, setEditingChatId] = useState(null);
-  const [newChatName, setNewChatName] = useState("");
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [darkMode, setDarkMode] = useState(true);
-  // user will be null when not authenticated
-  const [user, setUser] = useState(null);
-  const [showRegisterModal, setShowRegisterModal] = useState(false);
-
-  const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
-  const userMenuRef = useRef(null);
-  const socketRef = useRef(null);
-
-  const activeChat = chats.find((chat) => chat.id === activeChatId);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+export default function Home() {
+  const [dark, setDark] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [activeChat]);
-
-  // persist active chat id
-  useEffect(() => {
-    if (activeChatId !== null && activeChatId !== undefined)
-      safeSetLocal("activeChatId", String(activeChatId));
-  }, [activeChatId]);
-
-  // Fetch chats and user on mount
-  useEffect(() => {
-    // Fetch auth first. If authenticated, fetch chats and initialize socket.
-    const init = async () => {
+    let mounted = true;
+    (async () => {
       try {
-        const resUser = await axios.get("https://chatbuddy-sl9g.onrender.com/api/auth/me", {
+        const res = await axios.get(`${BaseUrl}/api/auth/checkAuth`, {
           withCredentials: true,
         });
-        if (resUser.data && resUser.data.user) {
-          const u = resUser.data.user;
-          setUser({
-            name:
-              u.fullName && u.fullName.firstName
-                ? `${u.fullName.firstName} ${u.fullName.lastName || ""}`.trim()
-                : u.email,
-            email: u.email,
-          });
-
-          // fetch chats for authenticated user
-          try {
-            const res = await axios.get("https://chatbuddy-sl9g.onrender.com/api/chat", {
-              withCredentials: true,
-            });
-            const serverChats = res.data.chats.reverse() || [];
-            const normalized = serverChats.map((c) => ({
-              id: c._id,
-              _id: c._id,
-              name: c.title,
-              messages: (c.messages || []).map((m, idx) => ({
-                id: idx + 1,
-                text: m.text ?? m.content ?? "",
-                isBot:
-                  typeof m.isBot === "boolean" ? m.isBot : m.role === "model",
-                timestamp: m.timestamp ?? m.createdAt ?? null,
-              })),
-            }));
-            setChats(normalized);
-            const stored = safeGetLocal("activeChatId");
-            if (stored) {
-              const found = normalized.find(
-                (c) => String(c.id) === String(stored)
-              );
-              if (found) setActiveChatId(String(stored));
-            }
-          } catch (e) {
-            console.error("Failed to fetch chats", e);
-          }
-
-          // initialize socket only for authenticated users
-          try {
-            const socket = ioClient("https://chatbuddy-sl9g.onrender.com", {
-              withCredentials: true,
-            });
-            socketRef.current = socket;
-
-            socket.on("connect", () => {
-              console.log("socket connected", socket.id);
-            });
-
-            socket.on("connect_error", (err) => {
-              console.error("Socket connect error", err.message || err);
-            });
-
-            socket.on("ai-response", (payload) => {
-              const botMessage = {
-                id: String(Date.now()),
-                text: payload.content,
-                isBot: true,
-                timestamp: payload.timestamp || new Date().toISOString(),
-              };
-
-              setChats((prevChats) =>
-                prevChats.map((chat) =>
-                  String(chat.id) === String(payload.chat)
-                    ? { ...chat, messages: [...chat.messages, botMessage] }
-                    : chat
-                )
-              );
-              setIsTyping(false);
-            });
-          } catch (err) {
-            console.error("Socket init failed", err);
-          }
-        } else {
-          // not authenticated: show register modal after delay
-          const seen = safeGetLocal("seenRegisterModal");
-          if (!seen) {
-            setTimeout(() => {
-              setShowRegisterModal(true);
-              safeSetLocal("seenRegisterModal", "1");
-            }, 2500);
-          }
-        }
+        if (!mounted) return;
+        setAuthenticated(Boolean(res.data && res.data.authenticated));
       } catch (err) {
-        // not authenticated or error
-        const seen = safeGetLocal("seenRegisterModal");
-        if (!seen) {
-          setTimeout(() => {
-            setShowRegisterModal(true);
-            safeSetLocal("seenRegisterModal", "1");
-          }, 2500);
-        }
-        console.error("Auth check failed", err);
+        console.error("Auth check error:", err);
+        setAuthenticated(false);
+      } finally {
+        if (mounted) setLoading(false);
       }
+    })();
+    return () => {
+      mounted = false;
     };
-
-    init();
   }, []);
 
-  // Initialize socket.io client and listeners
   useEffect(() => {
-    try {
-      const socket = ioClient("https://chatbuddy-sl9g.onrender.com", {
-        withCredentials: true,
-      });
-      socketRef.current = socket;
-
-      socket.on("connect", () => {
-        console.log("socket connected", socket.id);
-      });
-
-      socket.on("connect_error", (err) => {
-        console.error("Socket connect error", err.message || err);
-      });
-
-      socket.on("ai-response", (payload) => {
-        // payload: { content, chat, timestamp }
-        const botMessage = {
-          id: String(Date.now()),
-          text: payload.content,
-          isBot: true,
-          timestamp: payload.timestamp || new Date().toISOString(),
-        };
-
-        setChats((prevChats) =>
-          prevChats.map((chat) =>
-            String(chat.id) === String(payload.chat)
-              ? { ...chat, messages: [...chat.messages, botMessage] }
-              : chat
-          )
-        );
-        setIsTyping(false);
-      });
-
-      return () => {
-        if (socket) {
-          socket.off("ai-response");
-          socket.off("connect_error");
-          socket.off("connect");
-          socket.disconnect();
-        }
-      };
-    } catch (err) {
-      console.error("Failed to initialize socket", err);
-    }
+    const t = setTimeout(() => setVisible(true), 80);
+    return () => clearTimeout(t);
   }, []);
 
-  // Close user menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
-        setShowUserMenu(false);
-      }
-    };
+  const bg = dark ? "bg-[#0d0d0d] text-white" : "bg-[#f5f3ef] text-[#1a1a1a]";
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const navBg = dark
+    ? "bg-[#0d0d0d]/80 border-white/10"
+    : "bg-[#f5f3ef]/80 border-black/10";
 
-  // Create a new chat
-  const handleNewChat = async (titleParam) => {
-    // Only allow authenticated users to create chats
-    if (!user || !user.email) {
-      // open register modal or navigate to login
-      setShowRegisterModal(true);
-      return null;
-    }
+  const accent = dark ? "text-[#a78bfa]" : "text-[#7c3aed]";
+  const accentBg = dark
+    ? "bg-[#a78bff] text-white hover:bg-[#c4b5fd]"
+    : "bg-[#7c3aed] text-white hover:bg-[#6d28d9]";
 
-    // accept only string titles from callers; if caller passed an event (from onClick), prompt instead
-    let title = null;
-    if (typeof titleParam === "string" && titleParam.trim()) {
-      title = titleParam.trim();
-    } else {
-      title = window.prompt("Enter a title for this chat", "New Chat");
-    }
-    if (!title) return null;
+  const secondaryBtn = dark
+    ? "border border-white/25 text-white hover:bg-white/8"
+    : "border border-black/25 text-black hover:bg-black/6";
 
-    const newChatId = String(Date.now());
-    const newChat = {
-      id: newChatId,
-      name: title,
-      messages: [],
-    };
-
-    try {
-      const res = await axios.post(
-        "https://chatbuddy-sl9g.onrender.com/api/chat",
-        {
-          title,
-          messages: newChat.messages,
-        },
-        { withCredentials: true }
-      );
-      const saved = res.data.chat;
-      const savedNormalized = {
-        id: saved._id,
-        _id: saved._id,
-        name: saved.title,
-        messages: (saved.messages || []).map((m, idx) => ({
-          id: String(idx + 1),
-          text: m.text,
-          isBot: m.isBot,
-          timestamp: m.timestamp,
-        })),
-      };
-      setChats((prev) => [savedNormalized, ...prev]);
-      setActiveChatId(savedNormalized.id);
-      safeSetLocal("activeChatId", String(savedNormalized.id));
-      setSidebarOpen(false);
-      return savedNormalized.id;
-    } catch (err) {
-      console.error("Error creating chat", err);
-      // fallback to client-only chat
-      setChats((prev) => [newChat, ...prev]);
-      setActiveChatId(newChatId);
-      setSidebarOpen(false);
-      return newChatId;
-    }
-  };
-
-  // Send message in active chat
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) {
-      if (!activeChatId) {
-        handleNewChat();
-        return;
-      }
-      return;
-    }
-
-    // prevent unauthenticated users from sending messages
-    if (!user || !user.email) {
-      setShowRegisterModal(true);
-      return;
-    }
-
-    // If no active chat, create one first
-    // ensure there's an active chat id (create if missing using message text as title)
-    let ensuredChatId = activeChatId;
-    const ensureChat = async () => {
-      if (!ensuredChatId) {
-        const title =
-          inputMessage.length > 30
-            ? inputMessage.substring(0, 30) + "..."
-            : inputMessage;
-        ensuredChatId = await handleNewChat(title);
-      }
-    };
-
-    // If we need to create a chat, do it synchronously before sending
-    const maybeSend = async () => {
-      await ensureChat();
-
-      const newMessage = {
-        id: String(Date.now()),
-        text: inputMessage,
-        isBot: false,
-        timestamp: new Date(),
-      };
-
-      setChats((prevChats) =>
-        prevChats.map((chat) =>
-          chat.id === ensuredChatId
-            ? { ...chat, messages: [...chat.messages, newMessage] }
-            : chat
-        )
-      );
-      setInputMessage("");
-
-      // emit to socket (server will send ai-response and server will persist messages)
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit("user-message", {
-          content: newMessage.text,
-          chat: ensuredChatId,
-        });
-        setIsTyping(true);
-      }
-    };
-
-    maybeSend();
-  };
-
-  // Delete chat
-  const handleDeleteChat = async (chatId) => {
-    // Optimistic UI update
-    setChats((prev) => prev.filter((chat) => chat.id !== chatId));
-    if (activeChatId === chatId) {
-      const remainingChats = chats.filter((chat) => chat.id !== chatId);
-      setActiveChatId(remainingChats.length ? remainingChats[0].id : null);
-    }
-
-    // If user is not authenticated, nothing to delete on server
-    if (!user || !user.email) return;
-
-    try {
-      await axios.delete(`https://chatbuddy-sl9g.onrender.com/api/chat/${chatId}`, {
-        withCredentials: true,
-      });
-      // refetch chats to ensure state matches server
-      const res = await axios.get("https://chatbuddy-sl9g.onrender.com/api/chat", {
-        withCredentials: true,
-      });
-      const serverChats = res.data.chats || [];
-      const normalized = serverChats.map((c) => ({
-        id: c._id,
-        _id: c._id,
-        name: c.title,
-        messages: (c.messages || []).map((m, idx) => ({
-          id: idx + 1,
-          text: m.text ?? m.content ?? "",
-          isBot: typeof m.isBot === "boolean" ? m.isBot : m.role === "model",
-          timestamp: m.timestamp ?? m.createdAt ?? null,
-        })),
-      }));
-      setChats(normalized);
-    } catch (err) {
-      console.error("Failed to delete chat on server", err);
-      // optional: refetch chats or notify user
-    }
-  };
-
-  // Start renaming chat
-  const handleEditChat = (chat) => {
-    setEditingChatId(chat.id);
-    setNewChatName(chat.name);
-  };
-
-  // Save renamed chat
-  const handleSaveChatName = () => {
-    if (newChatName.trim()) {
-      setChats((prevChats) =>
-        prevChats.map((chat) =>
-          chat.id === editingChatId
-            ? { ...chat, name: newChatName.trim() }
-            : chat
-        )
-      );
-    }
-    setEditingChatId(null);
-    setNewChatName("");
-  };
-
-  // Handle logout
-  const handleLogout = async () => {
-    try {
-      await axios.post(
-        "https://chatbuddy-sl9g.onrender.com/api/auth/logout",
-        {},
-        { withCredentials: true }
-      );
-    } catch {
-      // ignore errors
-    }
-    // clear client state and redirect to login
-    safeSetLocal("activeChatId", "");
-    toast.info("Logged out successfully");
-    navigate("/login");
-  };
+  const statCard = dark
+    ? "bg-white/5 border border-white/10"
+    : "bg-white border border-black/8 shadow-sm";
 
   return (
     <div
-      className={`flex h-screen ${
-        darkMode ? "bg-gray-900 text-white" : "bg-gray-50 text-gray-900"
-      }`}>
-      <MobileHeader
-        onOpenSidebar={() => setSidebarOpen(true)}
-        activeTitle={activeChat?.name}
-      />
-
-      {/* Sidebar */}
-      <Sidebar
-        chats={chats}
-        activeChatId={activeChatId}
-        editingChatId={editingChatId}
-        newChatName={newChatName}
-        onNewChat={handleNewChat}
-        onSelectChat={(id) => {
-          setActiveChatId(id);
-          setSidebarOpen(false);
-        }}
-        onEditChat={(chat) => handleEditChat(chat)}
-        onDeleteChat={handleDeleteChat}
-        onChangeNewChatName={(val) => setNewChatName(val)}
-        onSaveChatName={handleSaveChatName}
-        user={user}
-        showUserMenu={showUserMenu}
-        setShowUserMenu={setShowUserMenu}
-        darkMode={darkMode}
-        sidebarOpen={sidebarOpen}
-        setDarkMode={setDarkMode}
-        onLogout={handleLogout}
-        setSidebarOpen={setSidebarOpen}
-      />
-
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto p-4 pt-20 lg:pt-4 justify-center items-center">
-          <div className="max-w-4xl mx-auto ">
-            {!activeChat ? (
-              // If authenticated show profile-style welcome, else show public landing
-              <div className="flex items-center justify-center h-full ">
-                <div className="text-center max-w-md mt-12">
-                  {user ? (
-                    <>
-                      <div className="w-24 h-24 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <div className="text-white text-xl font-semibold">
-                          {user.name?.charAt(0) ?? "C"}
-                        </div>
-                      </div>
-                      <h2 className="text-2xl font-bold mb-2">
-                        Welcome, {user.name}
-                      </h2>
-                      <p
-                        className={` ${
-                          darkMode ? "text-gray-400" : "text-gray-600"
-                        } mb-4`}>
-                        This is your ChatBuddy profile.
-                      </p>
-                      <div
-                        className={` ${
-                          darkMode ? "text-gray-300" : "text-gray-700"
-                        } text-sm mb-4`}>
-                        {user.email}
-                      </div>
-                      <p
-                        className={` ${
-                          darkMode ? "text-gray-400" : "text-gray-600"
-                        } mb-6`}>
-                        Start a new conversation or select an existing chat from
-                        the sidebar.
-                      </p>
-                      <div className="flex items-center justify-center gap-3">
-                        <button
-                          onClick={() => handleNewChat()}
-                          className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors">
-                          <Plus size={20} />
-                          Start New Chat
-                        </button>
-                        <button
-                          onClick={() => setShowUserMenu(true)}
-                          className="inline-flex items-center gap-2 px-4 py-2 border rounded-lg text-sm">
-                          View Profile
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-24 h-24 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <MessageSquare size={28} className="text-white" />
-                      </div>
-                      <h2 className="text-2xl font-bold mb-2">
-                        Welcome to ChatBuddy
-                      </h2>
-                      <p
-                        className={` ${
-                          darkMode ? "text-gray-400" : "text-gray-600"
-                        } mb-4`}>
-                        Create an account to save chats and use all features.
-                      </p>
-                      <div className="flex items-center justify-center gap-3">
-                        <button
-                          onClick={() => navigate("/register")}
-                          className="px-6 py-3 bg-blue-600 text-white rounded-lg">
-                          Register
-                        </button>
-                        <button
-                          onClick={() => navigate("/login")}
-                          className="px-6 py-3 border rounded-lg">
-                          Login
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : (
-              // Chat messages
-              <ChatWindow
-                activeChat={activeChat}
-                isTyping={isTyping}
-                messagesEndRef={messagesEndRef}
-                darkMode={darkMode}
-              />
-            )}
-          </div>
-        </div>
-
-        <MessageInput
-          inputRef={inputRef}
-          inputMessage={inputMessage}
-          setInputMessage={setInputMessage}
-          onSend={handleSendMessage}
-          activeChatId={activeChatId}
-          darkMode={darkMode}
+      className={`min-h-screen font-sans transition-colors duration-300 ${bg}`}
+      style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
+      {/* Ambient background */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div
+          className={`absolute -top-40 left-1/2 -translate-x-1/2 w-[700px] h-[400px] rounded-full blur-[120px] opacity-25 transition-colors duration-300 ${
+            dark ? "bg-[#7c3aed]" : "bg-[#c4b5fd]"
+          }`}
+        />
+        <div
+          className={`absolute bottom-0 right-0 w-[400px] h-[300px] rounded-full blur-[100px] opacity-15 transition-colors duration-300 ${
+            dark ? "bg-[#06b6d4]" : "bg-[#bae6fd]"
+          }`}
         />
       </div>
 
-      {/* Register modal for new visitors */}
-      {showRegisterModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold mb-2">Join ChatBuddy</h3>
-            <p className="text-sm mb-4">
-              Create an account to save chats and sync across devices.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => {
-                  setShowRegisterModal(false);
-                  navigate("/register");
-                }}
-                className="px-4 py-2 bg-blue-600 text-white rounded">
-                Register
-              </button>
-              <button
-                onClick={() => setShowRegisterModal(false)}
-                className="px-4 py-2 border rounded">
-                Maybe later
-              </button>
-            </div>
+      {/* NAV */}
+      <nav
+        className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 md:px-12 py-4 border-b backdrop-blur-xl ${navBg}`}>
+        {/* Logo */}
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`w-8 h-8 rounded-xl flex items-center justify-center text-white text-sm font-bold ${
+              dark ? "bg-[#7c3aed]" : "bg-[#7c3aed]"
+            }`}>
+            CB
+          </div>
+          <span className={`font-bold text-lg tracking-tight ${accent}`}>
+            ChatBuddy
+          </span>
+        </div>
+
+        {/* Right actions */}
+        {loading ? (
+          <div className="w-24 h-8 bg-gray-300 rounded-lg animate-pulse" />
+        ) : authenticated ? (
+          <a
+            href="/chatpage"
+            className={`px-4 py-2 rounded-lg font-medium animate-pulse transition-all ${accentBg}`}>
+            Go to Chat
+          </a>
+        ) : (
+          <div className="flex items-center gap-3">
+            {/* Dark mode toggle */}
+            <button
+              onClick={() => setDark(!dark)}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all border ${
+                dark
+                  ? "bg-white/8 border-white/15 hover:bg-white/15"
+                  : "bg-black/6 border-black/12 hover:bg-black/10"
+              }`}
+              aria-label="Toggle theme">
+              {dark ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  className="w-4.5 h-4.5 w-[18px] h-[18px]">
+                  <circle cx="12" cy="12" r="5" />
+                  <path
+                    d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  className="w-[18px] h-[18px]">
+                  <path
+                    d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
+
+            <a
+              href="/register"
+              className={`hidden md:inline-flex px-4 py-2 rounded-xl text-sm font-medium transition-all ${secondaryBtn}`}>
+              Register
+            </a>
+            <a
+              href="/login"
+              className={`hidden md:inline-flex px-4 py-2 rounded-xl text-sm font-semibold transition-all ${accentBg}`}>
+              Log in
+            </a>
+
+            {/* Mobile menu */}
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className={`md:hidden w-10 h-10 rounded-xl flex items-center justify-center border transition-all ${
+                dark
+                  ? "border-white/15 hover:bg-white/8"
+                  : "border-black/12 hover:bg-black/6"
+              }`}>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="w-4 h-4">
+                {menuOpen ? (
+                  <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
+                ) : (
+                  <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+                )}
+              </svg>
+            </button>
+          </div>
+        )}
+      </nav>
+
+      {/* Mobile dropdown */}
+      {menuOpen && (
+        <div
+          className={`fixed top-[69px] left-0 right-0 z-40 border-b px-6 py-4 flex flex-col gap-3 text-sm backdrop-blur-xl ${navBg}`}>
+          {["New Chat", "Library", "Search Chats", "Projects"].map((item) => (
+            <a key={item} href="#" className="py-1.5 opacity-80 font-medium">
+              {item}
+            </a>
+          ))}
+          <div className="flex gap-3 pt-2">
+            <a
+              href="/register"
+              className={`flex-1 text-center py-2 rounded-xl font-medium border transition-all ${secondaryBtn}`}>
+              Register
+            </a>
+            <a
+              href="/login"
+              className={`flex-1 text-center py-2 rounded-xl font-semibold transition-all ${accentBg}`}>
+              Log in
+            </a>
           </div>
         </div>
       )}
 
-      {/* Sidebar overlay for mobile */}
-      {sidebarOpen && (
+      {/* HERO */}
+      <main className="relative pt-36 pb-24 px-6 md:px-12 max-w-5xl mx-auto text-center">
         <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}></div>
-      )}
+          className={`transition-all duration-700 ${
+            visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
+          }`}>
+          {/* Badge */}
+          <div
+            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs font-semibold mb-8 tracking-wider uppercase"
+            style={{
+              borderColor: dark
+                ? "rgba(167,139,250,0.3)"
+                : "rgba(124,58,237,0.25)",
+              background: dark
+                ? "rgba(167,139,250,0.1)"
+                : "rgba(167,139,250,0.08)",
+              color: dark ? "#a78bfa" : "#7c3aed",
+            }}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+            Now with GPT-4o & Claude
+          </div>
+
+          {/* Heading */}
+          <h1
+            className="text-5xl md:text-7xl font-black leading-[1.05] tracking-tight mb-6"
+            style={{ fontFamily: "'DM Serif Display', Georgia, serif" }}>
+            What can I{" "}
+            <span
+              className="bg-clip-text text-transparent"
+              style={{
+                backgroundImage: dark
+                  ? "linear-gradient(135deg, #a78bfa 0%, #38bdf8 100%)"
+                  : "linear-gradient(135deg, #7c3aed 0%, #0ea5e9 100%)",
+              }}>
+              help
+            </span>{" "}
+            with?
+          </h1>
+
+          <p
+            className={`text-lg md:text-xl max-w-2xl mx-auto leading-relaxed mb-12 ${dark ? "text-white/55" : "text-black/50"}`}>
+            ChatBuddy is your all-in-one AI companion — build prototypes,
+            research deeply, and bring ideas to life in seconds.
+          </p>
+
+          {/* CTA Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-16">
+            <a
+              href="/register"
+              className={`px-7 py-3 rounded-2xl text-base font-bold transition-all shadow-lg ${accentBg}`}
+              style={{
+                boxShadow: dark
+                  ? "0 8px 30px rgba(124,58,237,0.35)"
+                  : "0 8px 30px rgba(124,58,237,0.25)",
+              }}>
+              Sign up for free
+            </a>
+            <a
+              href="/login"
+              className={`px-7 py-3 rounded-2xl text-base font-semibold transition-all ${secondaryBtn}`}>
+              Log in →
+            </a>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div
+          className={`grid grid-cols-2 md:grid-cols-4 gap-4 mb-20 transition-all duration-700 delay-300 ${
+            visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
+          }`}>
+          {stats.map((s) => (
+            <div
+              key={s.label}
+              className={`rounded-2xl p-5 text-center ${statCard}`}>
+              <p className={`text-3xl font-black tracking-tight ${accent}`}>
+                {s.value}
+              </p>
+              <p
+                className={`text-xs mt-1 font-medium ${dark ? "text-white/45" : "text-black/45"}`}>
+                {s.label}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* Render nested routes (e.g. ChatPage) */}
+        <Outlet />
+      </main>
     </div>
   );
-};
-
-export default Home;
+}

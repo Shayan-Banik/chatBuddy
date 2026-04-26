@@ -8,7 +8,7 @@ const { createMemory, queryMemory } = require("../service/vector.service");
 const { safeGenerateVector } = require("../service/ai.service"); // import safe wrapper
 
 async function initSocketServer(httpServer) {
-  const allowedOrigins = ["http://localhost:5173", "http://localhost:5174"];
+  const allowedOrigins = ["http://localhost:5173", "http://localhost:5174", "https://chatbuddy-sl9g.onrender.com"];
   const io = new Server(httpServer, {
     cors: {
       origin: allowedOrigins, // just use the array directly
